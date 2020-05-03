@@ -1,7 +1,7 @@
 import functools
 import inspect
 from collections import namedtuple
-from dataclasses import dataclass
+from dataclasses import make_dataclass
 from functools import lru_cache, partial
 from typing import get_type_hints
 
@@ -50,9 +50,8 @@ class datafunction(metaclass=_datafunction_meta):
             ):
                 raise TypeError(f"Parameter {name} is of invalid kind: {param.kind.name}")
 
-        def make_schema(label, annotations):
-            cls = type(f"{self.func.__name__}_{label}_schema", (), {"__annotations__": annotations})
-            datacls = dataclass(cls)
+        def make_schema(label, fields):
+            datacls = make_dataclass(f"{self.func.__name__}_{label}_schema", fields.items())
             schema = marshmallow_dataclass.class_schema(datacls)
             schema_instance = schema()
             return Schemas(datacls, schema, schema_instance)
