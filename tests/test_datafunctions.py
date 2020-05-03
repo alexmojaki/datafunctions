@@ -1,4 +1,5 @@
 import dataclasses
+import inspect
 from datetime import datetime
 from typing import Optional
 
@@ -56,6 +57,7 @@ def test_attributes():
     assert not foo.is_method
     assert foo.hints == {"x": int, "y": str, "return": bool}
     assert str(foo.signature) == "(x: int, y: str) -> bool"
+    assert inspect.signature(foo) == inspect.signature(foo.__wrapped__)
     assert foo.hinted_names == ["x", "y"]
 
     assert dataclasses.fields(foo.params_schemas.dataclass)[0].name == "x"
