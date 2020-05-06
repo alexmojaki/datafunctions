@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -eux
 
+tox -p auto
+
 if [ -z "${1+x}" ] then
     set +x
     echo Provide a version argument

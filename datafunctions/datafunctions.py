@@ -50,7 +50,8 @@ class _datafunction_meta(type):
 @lru_cache()
 class datafunction(metaclass=_datafunction_meta):
     """
-    Wrapper around a function which automatically deserializes incoming arguments and
+    @datafunction is a decorator 
+    which automatically deserializes incoming arguments of the decorated function and
     serializes the return value. For example::
 
         from datetime import datetime
