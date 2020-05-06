@@ -1,23 +1,45 @@
 import functools
 import inspect
-from collections import namedtuple
 from dataclasses import make_dataclass
 from functools import lru_cache, partial
-from typing import get_type_hints
+from typing import get_type_hints, NamedTuple, Type, Callable, Dict, Any, Tuple
 
+import marshmallow
 import marshmallow_dataclass
 from marshmallow import ValidationError
 
 
 class ArgumentError(Exception):
-    pass
+    """
+    Raised by datafunction.load/dump_arguments when the arguments are invalid,
+    e.g. if they cannot be bound to the function parameters
+    or they fail marshmallow validation.
+
+    There will always be an underlying exception in the __cause__ attribute.
+    """
 
 
 class ReturnError(Exception):
-    pass
+    """
+    Raised by datafunction.load/dump_result when the return value is invalid,
+    e.g. if fail marshmallows validation.
+
+    There will always be an underlying exception in the __cause__ attribute.
+    """
+
+
+class Schemas(NamedTuple):
+    dataclass: type
+    schema_class: Type[marshmallow.Schema]
+    schema_instance: marshmallow.Schema
 
 
 class _datafunction_meta(type):
+    """
+    Metaclass which allows datafunction to be used as a decorator
+    with or without arguments.
+    """
+
     def __call__(self, func=None, *, is_method=False):
         if func is not None:
             return super().__call__(func, is_method=is_method)
@@ -27,7 +49,73 @@ class _datafunction_meta(type):
 
 @lru_cache()
 class datafunction(metaclass=_datafunction_meta):
-    def __init__(self, func=None, *, is_method: bool = False):
+    """
+    Wrapper around a function which automatically deserializes incoming arguments and
+    serializes the return value. For example::
+
+        from datetime import datetime
+
+        @datafunction
+        def next_year(dt: datetime) -> datetime:
+            return dt.replace(year=dt.year + 1)
+
+        assert next_year("2019-01-02T00:00:00") == "2020-01-02T00:00:00"
+
+    @datafunction automatically converts the string argument to a datetime object, and then
+    converts the returned datetime back to a string.
+
+    More generally, the arguments and return value as seen from the outside the function
+    are basic JSON serializable objects - strings, dicts, etc.
+    They are converted to and from the correct types (as indicated by type annotations)
+    by marshmallow. Common Python types as well as dataclasses (which may be nested)
+    are supported. For example::
+
+        @dataclass
+        class Point:
+            x: int
+            y: int
+
+        @datafunction
+        def translate(p: Point, dx: int, dy: int) -> Point:
+            return Point(p.x + dx, p.y + dy)
+
+        assert translate({"x": 1, "y": 2}, 3, 4) == {"x": 4, "y": 6}
+
+    To decorate a method, pass is_method=True, e.g::
+
+        class MyClass:
+            @datafunction(is_method=True)
+            def method(self, x: int) -> int:
+                ...
+
+    All parameters and the return value must have a type annotation,
+    except for the first argument when is_method=True.
+    Variadic parameters (*args, **kwargs) and positional-only parameters (before /)
+    are not allowed.
+
+    If there is an exception deserializing or binding the arguments an ArgumentError
+    will be raised with the underlying exception attached to __cause__.
+    Similarly a ReturnError may be raised when trying to serialize the return value.
+
+    For more manual control, use the methods:
+        load_arguments
+        dump_arguments
+        load_result
+        dump_result
+
+    Under the hood, the type annotations are gathered into a dataclass which is then
+    converted into a marshmallow schema
+    using https://github.com/lovasoa/marshmallow_dataclass
+    which handles the (de)serialization.
+
+    Instances of this class have attributes params_schemas and return_schemas,
+    each of which have the following attributes:
+        dataclass
+        schema_class: the marshmallow schema class
+        schema_instance: a no-args instance of schema_class
+    """
+
+    def __init__(self, func: Callable = None, *, is_method: bool = False):
         self.func = func
         self.is_method = is_method
         functools.update_wrapper(self, func)
@@ -36,6 +124,8 @@ class datafunction(metaclass=_datafunction_meta):
 
         self.hinted_names = list(self.signature.parameters)
         if self.is_method:
+            # The first argument of a method (e.g. self)
+            # does not need to be hinted as it will not be deserialized
             del self.hinted_names[0]
 
         for name in [*self.hinted_names, "return"]:
@@ -66,22 +156,69 @@ class datafunction(metaclass=_datafunction_meta):
         return self.dump_result(result)
 
     def __get__(self, instance, owner):
+        # Ensure method binding works correctly
         @functools.wraps(self)
         def method(instance_self, *args, **kwargs):
             return self(instance_self, *args, **kwargs)
 
         return method.__get__(instance, owner)
 
-    def dump_arguments(self, *args, **kwargs):
+    def dump_arguments(self, *args, **kwargs) -> Dict[str, Any]:
+        """
+        Returns a dictionary containing JSON serializable values converted
+        from the arguments by the .dump() method of the marshmallow schema
+        derived from the parameter annotations.
+
+        For example:
+
+            @dataclass
+            class Point:
+                x: int
+                y: int
+
+            @datafunction
+            def translate(p: Point, dx: int, dy: int) -> Point:
+                return Point(p.x + dx, p.y + dy)
+
+            assert (
+                translate.dump_arguments(Point(1, 2), 3, 4) ==
+                translate.dump_arguments(p=Point(1, 2), dx=3, dy=4) ==
+                {"p": {"x": 1, "y": 2}, "dx": 3, "dy": 4}
+            )
+        """
         try:
-            hinted_arguments, all_arguments = self.arguments_dicts(args, kwargs)
+            hinted_arguments, all_arguments = self._arguments_dicts(args, kwargs)
+            # Only the hinted_arguments (i.e. not 'self') can be serialized
             return self.params_schemas.schema_instance.dump(hinted_arguments)
         except Exception as e:
             raise ArgumentError from e
 
-    def load_arguments(self, *args, **kwargs):
+    def load_arguments(self, *args, **kwargs) -> Dict[str, Any]:
+        """
+        Returns a dictionary of named deserialized arguments converted
+        from the given serialized arguments.
+        The conversion is done by the .load() method of the marshmallow schema
+        derived from the parameter annotations.
+
+        For example::
+
+            @dataclass
+            class Point:
+                x: int
+                y: int
+
+            @datafunction
+            def translate(p: Point, dx: int, dy: int) -> Point:
+                return Point(p.x + dx, p.y + dy)
+
+            assert (
+                translate.load_arguments({"x": 1, "y": 2}, 3, 4) ==
+                translate.load_arguments(p={"x": 1, "y": 2}, dx=3, dy=4) ==
+                {"p": Point(1, 2), "dx": 3, "dy": 4}
+            )
+        """
         try:
-            hinted_arguments, all_arguments = self.arguments_dicts(args, kwargs)
+            hinted_arguments, all_arguments = self._arguments_dicts(args, kwargs)
             datacls_instance = self.params_schemas.schema_instance.load(hinted_arguments)
 
             return {
@@ -94,7 +231,7 @@ class datafunction(metaclass=_datafunction_meta):
         except (TypeError, ValidationError) as e:
             raise ArgumentError from e
 
-    def arguments_dicts(self, args, kwargs):
+    def _arguments_dicts(self, args, kwargs) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         bound_arguments = self.signature.bind(*args, **kwargs)
         bound_arguments.apply_defaults()
         all_arguments = bound_arguments.arguments
@@ -105,6 +242,25 @@ class datafunction(metaclass=_datafunction_meta):
         return hinted_arguments, all_arguments
 
     def dump_result(self, result):
+        """
+        Returns a JSON serializable version of the given value
+        returned from the decorated function.
+        The conversion is done by the .dump() method of the marshmallow schema
+        derived from the return annotation.
+
+        For example::
+
+            @dataclass
+            class Point:
+                x: int
+                y: int
+
+            @datafunction
+            def translate(p: Point, dx: int, dy: int) -> Point:
+                return Point(p.x + dx, p.y + dy)
+
+            assert translate.dump_result(Point(1, 2)) == {"x": 1, "y": 2}
+        """
         if self.return_schemas is None:
             return None
 
@@ -116,6 +272,25 @@ class datafunction(metaclass=_datafunction_meta):
         return result_data["_return"]
 
     def load_result(self, result):
+        """
+        Deserializes the given serialized value representing a return from the function.
+        The conversion is done by the .load() method of the marshmallow schema
+        derived from the return annotation.
+
+        For example::
+
+            @dataclass
+            class Point:
+                x: int
+                y: int
+
+            @datafunction
+            def translate(p: Point, dx: int, dy: int) -> Point:
+                return Point(p.x + dx, p.y + dy)
+
+            assert translate.load_result({"x": 1, "y": 2}) == Point(1, 2)
+        """
+
         if self.return_schemas is None:
             return None
 
@@ -125,9 +300,3 @@ class datafunction(metaclass=_datafunction_meta):
             raise ReturnError from e
 
         return datacls_instance._return
-
-
-Schemas = namedtuple(
-    "Schemas",
-    "dataclass schema_class schema_instance"
-)
