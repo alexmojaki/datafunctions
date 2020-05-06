@@ -23,6 +23,8 @@ assert next_year("2019-01-02T00:00:00") == "2020-01-02T00:00:00"
 `@datafunction` automatically converts the string argument to a datetime object, and then
 converts the returned datetime back to a string.
 
+This is useful for calling functions over a remote connection or from a different language - see [instant_api](https://github.com/alexmojaki/instant_api) and [instant_client](https://github.com/alexmojaki/instant_client) for example.
+
 More generally, the arguments and return value as seen from the outside the function
 are basic JSON serializable objects - strings, dicts, etc.
 They are converted to and from the correct types (as indicated by type annotations)
