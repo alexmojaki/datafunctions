@@ -131,7 +131,7 @@ class datafunction(metaclass=_datafunction_meta):
 
         for name in [*self.hinted_names, "return"]:
             if name not in self.hints:
-                raise TypeError(f"Missing annotation for {name}")
+                raise TypeError(f"Missing annotation for {name} in function {func.__name__}")
 
         for name in self.hinted_names:
             param = self.signature.parameters[name]
@@ -139,7 +139,7 @@ class datafunction(metaclass=_datafunction_meta):
                     inspect.Parameter.POSITIONAL_OR_KEYWORD,
                     inspect.Parameter.KEYWORD_ONLY,
             ):
-                raise TypeError(f"Parameter {name} is of invalid kind: {param.kind.name}")
+                raise TypeError(f"Parameter {name} in function {func.__name__} is of invalid kind: {param.kind.name}")
 
         def make_schema(label, fields):
             datacls = make_dataclass(f"{self.func.__name__}_{label}_schema", fields.items())

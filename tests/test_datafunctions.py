@@ -132,24 +132,24 @@ def test_argument_validation():
 
 
 def test_missing_annotation():
-    with pytest.raises(TypeError, match="Missing annotation for x"):
+    with pytest.raises(TypeError, match="Missing annotation for x in function foo"):
         @datafunction
         def foo(x, y: int) -> int:
             return x + y
 
-    with pytest.raises(TypeError, match="Missing annotation for return"):
+    with pytest.raises(TypeError, match="Missing annotation for return in function foo"):
         @datafunction
         def foo(x: int, y: int):
             return x + y
 
 
 def test_invalid_parameter_kind():
-    with pytest.raises(TypeError, match="Parameter args is of invalid kind: VAR_POSITIONAL"):
+    with pytest.raises(TypeError, match="Parameter args in function foo is of invalid kind: VAR_POSITIONAL"):
         @datafunction
         def foo(*args: tuple) -> tuple:
             return args
 
-    with pytest.raises(TypeError, match="Parameter args is of invalid kind: VAR_KEYWORD"):
+    with pytest.raises(TypeError, match="Parameter args in function foo is of invalid kind: VAR_KEYWORD"):
         @datafunction
         def foo(**args: tuple) -> dict:
             return args
