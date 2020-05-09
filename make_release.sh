@@ -5,8 +5,6 @@ set -eux
 # which would mess up using the git tag as a version
 [ -z "$(git status --porcelain)" ]
 
-tox -p auto
-
 if [ -z "${1+x}" ]
 then
     set +x
@@ -21,6 +19,8 @@ else
         exit 1
     fi
 fi
+
+tox -p auto
 
 export TAG="v${1}"
 git tag "${TAG}"
