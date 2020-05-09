@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -eux
 
+# Ensure that there are no uncommitted changes
+# which would mess up using the git tag as a version
+[ -z "$(git status --porcelain)" ]
+
 tox -p auto
 
 if [ -z "${1+x}" ]
